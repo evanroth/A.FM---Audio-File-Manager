@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { WaveformData, FileSystemItem, SortKey, SortOrder, SamplerPadData, MoveShortcut } from './types';
 import WaveformVisualizer from './components/WaveformVisualizer';
 import FileExplorer from './components/FileExplorer';
-import SamplerGrid, { SamplerGridHandle } from './components/SamplerGrid';
 
 const SHORTCUT_KEY_SEQUENCE = ['z', 'x', 'c', 'v', 'b', 'n', 'm'];
 
@@ -156,16 +155,6 @@ const App: React.FC = () => {
   const [showPanel, setShowPanel] = useState(true);
   
   const [moveShortcuts, setMoveShortcuts] = useState<MoveShortcut[]>([]);
-
-  const [samplerPads, setSamplerPads] = useState<SamplerPadData[]>(() => 
-    Array.from({ length: 16 }, (_, i) => ({
-      id: i,
-      fileItem: null,
-      buffer: null,
-      waveformPoints: null,
-      colors: null
-    }))
-  );
 
   const [isRandom, setIsRandom] = useState(false);
   const [isLooping, setIsLooping] = useState(false);
@@ -1026,42 +1015,45 @@ const App: React.FC = () => {
                     disabled={moveShortcuts.length >= SHORTCUT_KEY_SEQUENCE.length}
                     className="text-[7px] font-black uppercase bg-red-600/20 text-red-600 px-2 py-1 hover:bg-red-600 hover:text-white transition-all disabled:opacity-20"
                   >
-                    Add Shortcut
+                    Add 'move' keyboard shortcut
                   </button>
                 </div>
                 
-                <div className="space-y-2">
+                <div className="space-y-4">
                   {moveShortcuts.map((shortcut) => (
-                    <div key={shortcut.key} className="flex items-center gap-2 group">
-                      <div className="w-5 h-5 flex items-center justify-center bg-white/5 border border-white/10 text-[9px] font-mono text-red-600 uppercase shrink-0">
-                        {shortcut.key}
+                    <div key={shortcut.key} className="flex flex-col gap-2 border-l border-red-600/20 pl-4 py-1 relative">
+                      <button 
+                        onClick={() => removeShortcut(shortcut.key)}
+                        className="absolute -left-1.5 top-0 w-3 h-3 bg-black border border-white/10 text-[8px] flex items-center justify-center text-neutral-700 hover:text-red-500 transition-colors"
+                      >
+                        ×
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 flex items-center justify-center bg-white/5 border border-white/10 text-[9px] font-mono text-red-600 uppercase shrink-0">
+                          {shortcut.key}
+                        </div>
+                        <span className="text-[8px] font-bold text-neutral-500 uppercase tracking-tight">adds current file to:</span>
                       </div>
-                      <span className="text-[8px] font-bold text-neutral-500 uppercase shrink-0">adds current file to</span>
                       <select
                         value={shortcut.targetPath}
                         onChange={(e) => updateShortcutTarget(shortcut.key, e.target.value)}
-                        className="flex-1 bg-black border border-white/10 text-[9px] font-black uppercase py-1 px-1 focus:border-red-600 outline-none"
+                        className="w-full bg-black border border-white/10 text-[9px] font-black uppercase py-2 px-2 focus:border-red-600 outline-none appearance-none cursor-pointer"
+                        style={{ background: 'black linear-gradient(to bottom, transparent, rgba(255,255,255,0.02))' }}
                       >
-                        <option value="">(Select Folder)</option>
+                        <option value="">(Select target folder)</option>
                         {availableFolders.map(folder => (
                           <option key={folder.id} value={folder.id}>{folder.id === 'root' ? '/' : folder.id}</option>
                         ))}
                       </select>
-                      <button 
-                        onClick={() => removeShortcut(shortcut.key)}
-                        className="text-[9px] text-neutral-700 hover:text-red-500 transition-colors px-1"
-                      >
-                        ×
-                      </button>
                     </div>
                   ))}
                   
                   {moveShortcuts.length === 0 && (
-                    <p className="text-[7px] text-neutral-800 uppercase italic">No move shortcuts assigned.</p>
+                    <p className="text-[7px] text-neutral-800 uppercase italic">No custom move shortcuts assigned.</p>
                   )}
 
-                  <p className="text-[7px] text-neutral-600 uppercase tracking-tighter pt-2 border-t border-white/5 opacity-50">
-                    * This functionality only works when the application is run locally with File System API support.
+                  <p className="text-[7px] text-neutral-500 uppercase tracking-[0.1em] leading-relaxed pt-2 border-t border-white/5 opacity-60 italic">
+                    Note: This functionality will only work when the application is run locally.
                   </p>
                 </div>
               </div>
