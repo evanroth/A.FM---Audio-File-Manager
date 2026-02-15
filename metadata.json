@@ -1,0 +1,5 @@
+{
+  "name": "Sample Organizer",
+  "description": "A tool for organizing audio files",
+  "requestFramePermissions": []
+}
