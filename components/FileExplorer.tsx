@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { FileSystemItem, SortKey, SortOrder } from '../types';
 import { matchSmartSearch } from '../App';
 
@@ -30,6 +31,8 @@ interface FileExplorerProps {
   onRate?: (id: string, rating: number) => void;
 }
 
+const ROW_HEIGHT = 34; // Fixed height for virtualization
+
 const formatSize = (bytes?: number) => {
   if (bytes === undefined) return '--';
   if (bytes < 1024) return `${bytes}B`;
@@ -57,23 +60,12 @@ interface FileRowProps {
   onToggleSelection?: (id: string) => void;
   onRate?: (id: string, rating: number) => void;
   onLocateFile?: (path: string) => void;
+  style?: React.CSSProperties;
 }
 
 const FileRow: React.FC<FileRowProps> = React.memo(({ 
-  item, isActive, isSelected, duration, rating, onToggleFolder, onFileSelect, onToggleSelection, onRate, onLocateFile 
+  item, isActive, isSelected, duration, rating, onToggleFolder, onFileSelect, onToggleSelection, onRate, onLocateFile, style
 }) => {
-  const rowRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isActive && rowRef.current) {
-      rowRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-        inline: 'nearest'
-      });
-    }
-  }, [isActive]);
-
   const handleDragStart = (e: React.DragEvent) => {
     if (item.kind !== 'file') return;
     e.dataTransfer.setData('application/json', JSON.stringify({ fileId: item.id }));
@@ -100,12 +92,16 @@ const FileRow: React.FC<FileRowProps> = React.memo(({
 
   return (
     <div
-      ref={rowRef}
       onClick={() => item.kind === 'directory' ? onToggleFolder(item.id) : onFileSelect(item)}
       draggable={item.kind === 'file'}
       onDragStart={handleDragStart}
-      className={`flex items-center group py-2 cursor-pointer hover:bg-white/10 transition-colors border-b border-white/5 ${isSelected ? 'bg-red-600/10' : ''} ${item.kind === 'file' ? 'active:opacity-50' : ''}`}
-      style={{ paddingLeft: `${item.depth * 12 + 6}px`, paddingRight: '8px' }}
+      className={`absolute left-0 right-0 flex items-center group cursor-pointer hover:bg-white/10 transition-colors border-b border-white/5 ${isSelected ? 'bg-red-600/10' : ''} ${item.kind === 'file' ? 'active:opacity-50' : ''} ${isActive ? 'bg-white/5' : ''}`}
+      style={{ 
+        ...style,
+        height: ROW_HEIGHT,
+        paddingLeft: `${item.depth * 12 + 6}px`, 
+        paddingRight: '8px' 
+      }}
     >
       {item.kind === 'file' && onToggleSelection && (
         <div 
@@ -159,55 +155,35 @@ const FileRow: React.FC<FileRowProps> = React.memo(({
 });
 
 const FileExplorer: React.FC<FileExplorerProps> = ({ 
-  items, 
-  onFileSelect, 
-  selectedIds = new Set(), 
-  onToggleSelection,
-  filterCriteria,
-  sortKey = 'name',
-  sortOrder = 'asc',
-  activeId,
-  durations = {},
-  ratings = {},
-  onRate,
-  onLocateFile
+  items, onFileSelect, selectedIds = new Set(), onToggleSelection,
+  filterCriteria, sortKey = 'name', sortOrder = 'asc',
+  activeId, durations = {}, ratings = {}, onRate, onLocateFile
 }) => {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['root']));
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(600);
+
   const searchActive = !!(filterCriteria?.searchText?.trim()) || (filterCriteria?.minRating && filterCriteria.minRating > 0);
 
-  useEffect(() => {
-    if (searchActive) {
-      const allFolders = new Set<string>();
-      const collect = (list: FileSystemItem[]) => {
-        list.forEach(item => {
-          if (item.kind === 'directory') {
-            allFolders.add(item.id);
-            if (item.children) collect(item.children);
-          }
-        });
-      };
-      collect(items);
-      setExpandedFolders(allFolders);
-    }
-  }, [searchActive, items]);
-
+  // Auto-expand parents of activeId
   useEffect(() => {
     if (activeId) {
       const parts = activeId.split('/');
       const parents: string[] = [];
+      // Build parent paths: "folder", "folder/sub", etc
       for (let i = 1; i < parts.length; i++) {
         parents.push(parts.slice(0, i).join('/'));
       }
-      
       if (parents.length > 0) {
         setExpandedFolders(prev => {
           const next = new Set(prev);
           let changed = false;
-          parents.forEach(p => {
-            if (!next.has(p)) {
-              next.add(p);
-              changed = true;
-            }
+          parents.forEach(p => { 
+            if (!next.has(p)) { 
+              next.add(p); 
+              changed = true; 
+            } 
           });
           return changed ? next : prev;
         });
@@ -215,16 +191,33 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
     }
   }, [activeId]);
 
-  const toggleFolder = (id: string) => {
-    const next = new Set(expandedFolders);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setExpandedFolders(next);
-  };
+  // Handle resizing and scrolling for virtualization
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(entries => {
+      if (entries[0]) {
+        setViewportHeight(entries[0].contentRect.height);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  const toggleFolder = useCallback((id: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
 
   const flattenedList = useMemo(() => {
     const result: (FileSystemItem & { depth: number; isExpanded?: boolean })[] = [];
-
     const processNode = (node: FileSystemItem, depth: number) => {
       const duration = durations[node.id] || 0;
       const rating = ratings[node.id] || 0;
@@ -232,27 +225,23 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
       const nodeMatchesSearch = matchSmartSearch(node.name, searchText);
 
       if (node.kind === 'file') {
-        const matchSize = (node.size || 0) >= minSize! && (node.size || 0) <= maxSize!;
-        const matchDuration = duration >= minDuration! && duration <= maxDuration!;
-        const matchDate = (node.lastModified || 0) >= minDate! && (node.lastModified || 0) <= maxDate!;
+        const matchSize = (node.size || 0) >= (minSize || 0) && (node.size || 0) <= (maxSize || Infinity);
+        const matchDuration = duration >= (minDuration || 0) && duration <= (maxDuration || Infinity);
+        const matchDate = (node.lastModified || 0) >= (minDate || 0) && (node.lastModified || 0) <= (maxDate || Infinity);
         const matchRating = rating >= minRating;
-        
-        if (nodeMatchesSearch && matchSize && matchDuration && matchDate && matchRating) {
-          result.push({ ...node, depth });
-        }
+        if (nodeMatchesSearch && matchSize && matchDuration && matchDate && matchRating) result.push({ ...node, depth });
       } else {
         const isExpanded = expandedFolders.has(node.id);
         const children = node.children || [];
-        
         const originalResultLength = result.length;
+        
         if (isExpanded || searchActive) {
           children.forEach(child => processNode(child, depth + 1));
         }
-
+        
         const hasMatches = result.length > originalResultLength;
         if (hasMatches || (nodeMatchesSearch && node.id !== 'root')) {
           const matches = result.splice(originalResultLength);
-          
           matches.sort((a, b) => {
             let valA: any, valB: any;
             if (sortKey === 'date') { valA = a.lastModified || 0; valB = b.lastModified || 0; }
@@ -262,23 +251,42 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
             if (sortKey === 'name' || sortKey === 'type') { valA = String(valA).toLowerCase(); valB = String(valB).toLowerCase(); }
             return valA < valB ? (sortOrder === 'asc' ? -1 : 1) : (sortOrder === 'asc' ? 1 : -1);
           });
-
           result.push({ ...node, depth, isExpanded });
-          if (isExpanded) {
-            result.push(...matches);
-          }
+          if (isExpanded) result.push(...matches);
         }
       }
     };
-
     items.forEach(item => processNode(item, 0));
     return result;
   }, [items, expandedFolders, filterCriteria, sortKey, sortOrder, durations, ratings, searchActive]);
 
+  // Center activeId when it changes
+  useEffect(() => {
+    if (activeId && containerRef.current && flattenedList.length > 0) {
+      const index = flattenedList.findIndex(item => item.id === activeId);
+      if (index !== -1) {
+        const targetScroll = (index * ROW_HEIGHT) - (viewportHeight / 2) + (ROW_HEIGHT / 2);
+        containerRef.current.scrollTo({
+          top: Math.max(0, targetScroll),
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [activeId, flattenedList.length, viewportHeight]);
+
+  // Virtualization slice
+  const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
+  const endIndex = Math.min(flattenedList.length, Math.floor((scrollTop + viewportHeight) / ROW_HEIGHT) + 10);
+  const visibleItems = flattenedList.slice(startIndex, endIndex);
+
   return (
-    <div className="w-full pb-20">
-      <div className="py-2 scrollbar-hide">
-        {flattenedList.map(item => (
+    <div 
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="w-full h-full overflow-y-auto scrollbar-hide relative"
+    >
+      <div style={{ height: flattenedList.length * ROW_HEIGHT, position: 'relative' }}>
+        {visibleItems.map((item, idx) => (
           <FileRow 
             key={item.id}
             item={item}
@@ -291,14 +299,13 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
             onToggleSelection={onToggleSelection}
             onRate={onRate}
             onLocateFile={onLocateFile}
+            style={{ top: (startIndex + idx) * ROW_HEIGHT }}
           />
         ))}
         {flattenedList.length === 0 && (
-          <div className="px-10 py-16 text-center">
+          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
             <div className="w-8 h-[1px] bg-red-600/30 mx-auto mb-4"></div>
-            <p className="text-neutral-700 text-[10px] uppercase tracking-[0.4em] font-black italic">
-              No samples match filters
-            </p>
+            <p className="text-neutral-700 text-[10px] uppercase tracking-[0.4em] font-black italic">No samples match filters</p>
           </div>
         )}
       </div>
