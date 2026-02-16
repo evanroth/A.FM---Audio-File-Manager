@@ -675,9 +675,10 @@ const App: React.FC = () => {
     }
     
     const nextFile = filteredFiles[nextIdx];
-    // Navigation / Auto-advance ALWAYS starts playback
-    if (nextFile) playFile(nextFile, true);
-  }, [filteredFiles, activeFileId, isRandom, isLooping, playFile]);
+    // Navigation (manual press) preserves play state, auto-advance (onEnded) always plays.
+    const shouldPlay = forceNext ? isPlaying : true;
+    if (nextFile) playFile(nextFile, shouldPlay);
+  }, [filteredFiles, activeFileId, isRandom, isLooping, isPlaying, playFile]);
 
   // Keep playNextRef in sync to avoid circular dependencies
   useEffect(() => {
@@ -698,9 +699,9 @@ const App: React.FC = () => {
     }
     
     const prevFile = filteredFiles[prevIdx];
-    // Navigation ALWAYS starts playback
-    if (prevFile) playFile(prevFile, true);
-  }, [filteredFiles, activeFileId, isRandom, playFile]);
+    // Navigation ALWAYS preserves current play state
+    if (prevFile) playFile(prevFile, isPlaying);
+  }, [filteredFiles, activeFileId, isRandom, isPlaying, playFile]);
 
   const handleBatchMove = async (target: FileSystemItem) => {
     const itemsToMove: FileSystemItem[] = [];
