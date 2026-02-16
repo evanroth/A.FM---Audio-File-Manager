@@ -218,6 +218,20 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
     return filtered.map(item => ({ ...item, depth: 0 }));
   }, [items, filterCriteria, sortKey, sortOrder, durations, ratings]);
 
+  // Auto-scroll to center active item
+  useEffect(() => {
+    if (activeId && containerRef.current && flattenedList.length > 0) {
+      const index = flattenedList.findIndex(item => item.id === activeId);
+      if (index !== -1) {
+        const targetScroll = (index * ROW_HEIGHT) - (viewportHeight / 2) + (ROW_HEIGHT / 2);
+        containerRef.current.scrollTo({
+          top: Math.max(0, targetScroll),
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [activeId, flattenedList, viewportHeight]);
+
   // Virtualization slice
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);
   const endIndex = Math.min(flattenedList.length, Math.floor((scrollTop + viewportHeight) / ROW_HEIGHT) + 10);
