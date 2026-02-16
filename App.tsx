@@ -653,37 +653,31 @@ const App: React.FC = () => {
   }, [isStarted, isLoading, filteredFiles, playFile]);
 
   const playNext = useCallback((forceNext: boolean = false) => {
-    // 1. Filter global filteredFiles list to only include files visible in the current folder view
-    const visibleFiltered = filteredFiles.filter(f => {
-      if (currentPath === 'root') return !f.id.includes('/');
-      const prefix = currentPath + '/';
-      return f.id.startsWith(prefix) && !f.id.substring(prefix.length).includes('/');
-    });
-
-    if (visibleFiltered.length === 0) return;
+    if (filteredFiles.length === 0) return;
     
-    // 2. Consistent lookup of the active file within the visible subset
-    const activeFile = visibleFiltered.find(f => f.id === activeFileId);
+    // Consistent lookup of the active file within the global filtered set
+    const activeFile = filteredFiles.find(f => f.id === activeFileId);
     
-    // 3. Handle Looping
+    // Handle Looping
     if (!forceNext && isLooping && activeFile) {
         playFile(activeFile, true);
         return;
     }
     
-    // 4. Calculate Next Index
+    // Calculate Next Index using global filteredFiles array
     let nextIdx;
     if (isRandom) {
-      nextIdx = Math.floor(Math.random() * visibleFiltered.length);
+      nextIdx = Math.floor(Math.random() * filteredFiles.length);
     } else {
-      const currentFilteredIdx = visibleFiltered.findIndex(f => f.id === activeFileId);
-      nextIdx = (currentFilteredIdx + 1) % visibleFiltered.length;
+      const currentIdx = filteredFiles.findIndex(f => f.id === activeFileId);
+      // Handles wrapping to 0 correctly regardless of current index status
+      nextIdx = (currentIdx + 1) % filteredFiles.length;
     }
     
-    const nextFile = visibleFiltered[nextIdx];
+    const nextFile = filteredFiles[nextIdx];
     // Navigation / Auto-advance ALWAYS starts playback
     if (nextFile) playFile(nextFile, true);
-  }, [filteredFiles, currentPath, activeFileId, isRandom, isLooping, playFile]);
+  }, [filteredFiles, activeFileId, isRandom, isLooping, playFile]);
 
   // Keep playNextRef in sync to avoid circular dependencies
   useEffect(() => {
@@ -691,28 +685,22 @@ const App: React.FC = () => {
   }, [playNext]);
 
   const playPrev = useCallback(() => {
-    // Filter to visible files consistent with browser navigation
-    const visibleFiltered = filteredFiles.filter(f => {
-      if (currentPath === 'root') return !f.id.includes('/');
-      const prefix = currentPath + '/';
-      return f.id.startsWith(prefix) && !f.id.substring(prefix.length).includes('/');
-    });
-
-    if (visibleFiltered.length === 0) return;
+    if (filteredFiles.length === 0) return;
     
-    const currentFilteredIdx = visibleFiltered.findIndex(f => f.id === activeFileId);
+    // Calculate Prev Index using global filteredFiles array
     let prevIdx;
     if (isRandom) {
-      prevIdx = Math.floor(Math.random() * visibleFiltered.length);
+      prevIdx = Math.floor(Math.random() * filteredFiles.length);
     } else {
-      // Correctly handle backwards wrap around
-      prevIdx = (currentFilteredIdx - 1 + visibleFiltered.length) % visibleFiltered.length;
+      const currentIdx = filteredFiles.findIndex(f => f.id === activeFileId);
+      // Correctly handle backwards wrap around using global list
+      prevIdx = (currentIdx - 1 + filteredFiles.length) % filteredFiles.length;
     }
     
-    const prevFile = visibleFiltered[prevIdx];
+    const prevFile = filteredFiles[prevIdx];
     // Navigation ALWAYS starts playback
     if (prevFile) playFile(prevFile, true);
-  }, [filteredFiles, currentPath, activeFileId, isRandom, playFile]);
+  }, [filteredFiles, activeFileId, isRandom, playFile]);
 
   const handleBatchMove = async (target: FileSystemItem) => {
     const itemsToMove: FileSystemItem[] = [];
