@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { FileSystemItem, SortKey, SortOrder } from '../types';
 import { matchSmartSearch } from '../App';
@@ -29,6 +28,7 @@ interface FileExplorerProps {
   durations?: Record<string, number>;
   ratings?: Record<string, number>;
   onRate?: (id: string, rating: number) => void;
+  onToggleFolder?: (id: string) => void;
 }
 
 const ROW_HEIGHT = 34; // Fixed height for virtualization
@@ -116,7 +116,7 @@ const FileRow: React.FC<FileRowProps> = React.memo(({
       )}
 
       <span className="w-3 h-3 mr-1 flex items-center justify-center text-[8px] text-white/30 shrink-0">
-        {item.kind === 'directory' ? (item.isExpanded ? '▼' : '▶') : '•'}
+        {item.kind === 'directory' ? '▶' : '•'}
       </span>
       
       <div className="flex-1 flex items-center justify-between overflow-hidden">
@@ -157,39 +157,11 @@ const FileRow: React.FC<FileRowProps> = React.memo(({
 const FileExplorer: React.FC<FileExplorerProps> = ({ 
   items, onFileSelect, selectedIds = new Set(), onToggleSelection,
   filterCriteria, sortKey = 'name', sortOrder = 'asc',
-  activeId, durations = {}, ratings = {}, onRate, onLocateFile
+  activeId, durations = {}, ratings = {}, onRate, onLocateFile, onToggleFolder
 }) => {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['root']));
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(600);
-
-  const searchActive = !!(filterCriteria?.searchText?.trim()) || (filterCriteria?.minRating && filterCriteria.minRating > 0);
-
-  // Auto-expand parents of activeId
-  useEffect(() => {
-    if (activeId) {
-      const parts = activeId.split('/');
-      const parents: string[] = [];
-      // Build parent paths: "folder", "folder/sub", etc
-      for (let i = 1; i < parts.length; i++) {
-        parents.push(parts.slice(0, i).join('/'));
-      }
-      if (parents.length > 0) {
-        setExpandedFolders(prev => {
-          const next = new Set(prev);
-          let changed = false;
-          parents.forEach(p => { 
-            if (!next.has(p)) { 
-              next.add(p); 
-              changed = true; 
-            } 
-          });
-          return changed ? next : prev;
-        });
-      }
-    }
-  }, [activeId]);
 
   // Handle resizing and scrolling for virtualization
   useEffect(() => {
@@ -209,19 +181,17 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
   }, []);
 
   const toggleFolder = useCallback((id: string) => {
-    setExpandedFolders(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
+    if (onToggleFolder) {
+      onToggleFolder(id);
+    }
+  }, [onToggleFolder]);
 
   const flattenedList = useMemo(() => {
-    const result: (FileSystemItem & { depth: number; isExpanded?: boolean })[] = [];
-    const processNode = (node: FileSystemItem, depth: number) => {
+    const { searchText = '', minSize, maxSize, minDuration, maxDuration, minDate, maxDate, minRating = 0 } = filterCriteria || {};
+    
+    const filtered = items.filter(node => {
       const duration = durations[node.id] || 0;
       const rating = ratings[node.id] || 0;
-      const { searchText = '', minSize, maxSize, minDuration, maxDuration, minDate, maxDate, minRating = 0 } = filterCriteria || {};
       const nodeMatchesSearch = matchSmartSearch(node.name, searchText);
 
       if (node.kind === 'file') {
@@ -229,50 +199,24 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
         const matchDuration = duration >= (minDuration || 0) && duration <= (maxDuration || Infinity);
         const matchDate = (node.lastModified || 0) >= (minDate || 0) && (node.lastModified || 0) <= (maxDate || Infinity);
         const matchRating = rating >= minRating;
-        if (nodeMatchesSearch && matchSize && matchDuration && matchDate && matchRating) result.push({ ...node, depth });
+        return nodeMatchesSearch && matchSize && matchDuration && matchDate && matchRating;
       } else {
-        const isExpanded = expandedFolders.has(node.id);
-        const children = node.children || [];
-        const originalResultLength = result.length;
-        
-        if (isExpanded || searchActive) {
-          children.forEach(child => processNode(child, depth + 1));
-        }
-        
-        const hasMatches = result.length > originalResultLength;
-        if (hasMatches || (nodeMatchesSearch && node.id !== 'root')) {
-          const matches = result.splice(originalResultLength);
-          matches.sort((a, b) => {
-            let valA: any, valB: any;
-            if (sortKey === 'date') { valA = a.lastModified || 0; valB = b.lastModified || 0; }
-            else if (sortKey === 'duration') { valA = durations[a.id] || 0; valB = durations[b.id] || 0; }
-            else if (sortKey === 'rating') { valA = ratings[a.id] || 0; valB = ratings[b.id] || 0; }
-            else { valA = (a as any)[sortKey] || 0; valB = (b as any)[sortKey] || 0; }
-            if (sortKey === 'name' || sortKey === 'type') { valA = String(valA).toLowerCase(); valB = String(valB).toLowerCase(); }
-            return valA < valB ? (sortOrder === 'asc' ? -1 : 1) : (sortOrder === 'asc' ? 1 : -1);
-          });
-          result.push({ ...node, depth, isExpanded });
-          if (isExpanded) result.push(...matches);
-        }
+        return nodeMatchesSearch;
       }
-    };
-    items.forEach(item => processNode(item, 0));
-    return result;
-  }, [items, expandedFolders, filterCriteria, sortKey, sortOrder, durations, ratings, searchActive]);
+    });
 
-  // Center activeId when it changes
-  useEffect(() => {
-    if (activeId && containerRef.current && flattenedList.length > 0) {
-      const index = flattenedList.findIndex(item => item.id === activeId);
-      if (index !== -1) {
-        const targetScroll = (index * ROW_HEIGHT) - (viewportHeight / 2) + (ROW_HEIGHT / 2);
-        containerRef.current.scrollTo({
-          top: Math.max(0, targetScroll),
-          behavior: 'smooth'
-        });
-      }
-    }
-  }, [activeId, flattenedList.length, viewportHeight]);
+    filtered.sort((a, b) => {
+      let valA: any, valB: any;
+      if (sortKey === 'date') { valA = a.lastModified || 0; valB = b.lastModified || 0; }
+      else if (sortKey === 'duration') { valA = durations[a.id] || 0; valB = durations[b.id] || 0; }
+      else if (sortKey === 'rating') { valA = ratings[a.id] || 0; valB = ratings[b.id] || 0; }
+      else { valA = (a as any)[sortKey] || 0; valB = (b as any)[sortKey] || 0; }
+      if (sortKey === 'name' || sortKey === 'type') { valA = String(valA).toLowerCase(); valB = String(valB).toLowerCase(); }
+      return valA < valB ? (sortOrder === 'asc' ? -1 : 1) : (sortOrder === 'asc' ? 1 : -1);
+    });
+
+    return filtered.map(item => ({ ...item, depth: 0 }));
+  }, [items, filterCriteria, sortKey, sortOrder, durations, ratings]);
 
   // Virtualization slice
   const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 10);

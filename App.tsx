@@ -80,12 +80,6 @@ export const matchSmartSearch = (text: string, query: string): boolean => {
   });
 };
 
-const extractYoutubeId = (url: string): string | null => {
-  const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
-  const match = url.match(regExp);
-  return (match && match[7].length === 11) ? match[7] : null;
-};
-
 interface DualRangeSliderProps {
   min: number;
   max: number;
@@ -198,7 +192,6 @@ const App: React.FC = () => {
   const [isTransitionX, setIsTransitionX] = useState(false);
   const [isTransitionY, setIsTransitionY] = useState(true);
   
-  const [youtubeUrl, setYoutubeUrl] = useState('');
   const [gradientHues, setGradientHues] = useState<[number, number]>([180, 240]);
   const [showFileInfo, setShowFileInfo] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -213,6 +206,8 @@ const App: React.FC = () => {
   const [minDate, setMinDate] = useState(0);
   const [maxDate, setMaxDate] = useState(Date.now());
   const [minRating, setMinRating] = useState(0);
+
+  const [currentPath, setCurrentPath] = useState<string>('root');
 
   const [bounds, setBounds] = useState({
     size: { min: 0, max: 100000000 },
@@ -336,7 +331,7 @@ const App: React.FC = () => {
 
         if (entry.kind === 'file') {
           const name = entry.name.toLowerCase();
-          if (name.endsWith('.wav') || name.endsWith('.mp3') || name.endsWith('.aif') || name.endsWith('.aiff')) {
+          if (name.endsWith('.wav') || name.endsWith('.mp3') || name.endsWith('.aif') || name.endsWith('.aiff') || name.endsWith('.flac') || name.endsWith('.ogg') || name.endsWith('.m4a') || name.endsWith('.aac')) {
             const file = await (entry as FileSystemFileHandle).getFile();
             item.size = file.size;
             item.type = file.type;
@@ -470,7 +465,36 @@ const App: React.FC = () => {
     };
 
     enrichMetadata();
-  }, [isStarted, allFiles.length]);
+  }, [isStarted, allFiles.length, bounds.duration.max]);
+
+  const currentFolderItems = useMemo(() => {
+    if (explorerItems.length === 0) return [];
+    if (currentPath === 'root') return explorerItems[0].children || [];
+    
+    const findInTree = (nodes: FileSystemItem[], id: string): FileSystemItem | null => {
+      for (const node of nodes) {
+        if (node.id === id) return node;
+        if (node.children) {
+          const found = findInTree(node.children, id);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const node = findInTree(explorerItems, currentPath);
+    return node?.children || [];
+  }, [explorerItems, currentPath]);
+
+  const navigateUp = () => {
+    if (currentPath === 'root') return;
+    const parts = currentPath.split('/');
+    if (parts.length === 1) setCurrentPath('root');
+    else {
+      parts.pop();
+      setCurrentPath(parts.join('/'));
+    }
+  };
 
   const sortedFiles = useMemo(() => {
     return [...allFiles].sort((a, b) => {
@@ -629,22 +653,37 @@ const App: React.FC = () => {
   }, [isStarted, isLoading, filteredFiles, playFile]);
 
   const playNext = useCallback((forceNext: boolean = false) => {
-    if (filteredFiles.length === 0) return;
-    const activeFile = allFiles.find(f => f.id === activeFileId);
+    // 1. Filter global filteredFiles list to only include files visible in the current folder view
+    const visibleFiltered = filteredFiles.filter(f => {
+      if (currentPath === 'root') return !f.id.includes('/');
+      const prefix = currentPath + '/';
+      return f.id.startsWith(prefix) && !f.id.substring(prefix.length).includes('/');
+    });
+
+    if (visibleFiltered.length === 0) return;
+    
+    // 2. Consistent lookup of the active file within the visible subset
+    const activeFile = visibleFiltered.find(f => f.id === activeFileId);
+    
+    // 3. Handle Looping
     if (!forceNext && isLooping && activeFile) {
-        playFile(activeFile, isPlaying);
+        playFile(activeFile, true);
         return;
     }
+    
+    // 4. Calculate Next Index
     let nextIdx;
     if (isRandom) {
-      nextIdx = Math.floor(Math.random() * filteredFiles.length);
+      nextIdx = Math.floor(Math.random() * visibleFiltered.length);
     } else {
-      const currentFilteredIdx = filteredFiles.findIndex(f => f.id === activeFileId);
-      nextIdx = (currentFilteredIdx + 1) % filteredFiles.length;
+      const currentFilteredIdx = visibleFiltered.findIndex(f => f.id === activeFileId);
+      nextIdx = (currentFilteredIdx + 1) % visibleFiltered.length;
     }
-    const nextFile = filteredFiles[nextIdx];
-    if (nextFile) playFile(nextFile, isPlaying);
-  }, [filteredFiles, allFiles, activeFileId, isRandom, isLooping, isPlaying, playFile]);
+    
+    const nextFile = visibleFiltered[nextIdx];
+    // Navigation / Auto-advance ALWAYS starts playback
+    if (nextFile) playFile(nextFile, true);
+  }, [filteredFiles, currentPath, activeFileId, isRandom, isLooping, playFile]);
 
   // Keep playNextRef in sync to avoid circular dependencies
   useEffect(() => {
@@ -652,17 +691,28 @@ const App: React.FC = () => {
   }, [playNext]);
 
   const playPrev = useCallback(() => {
-    if (filteredFiles.length === 0) return;
-    const currentFilteredIdx = filteredFiles.findIndex(f => f.id === activeFileId);
+    // Filter to visible files consistent with browser navigation
+    const visibleFiltered = filteredFiles.filter(f => {
+      if (currentPath === 'root') return !f.id.includes('/');
+      const prefix = currentPath + '/';
+      return f.id.startsWith(prefix) && !f.id.substring(prefix.length).includes('/');
+    });
+
+    if (visibleFiltered.length === 0) return;
+    
+    const currentFilteredIdx = visibleFiltered.findIndex(f => f.id === activeFileId);
     let prevIdx;
     if (isRandom) {
-      prevIdx = Math.floor(Math.random() * filteredFiles.length);
+      prevIdx = Math.floor(Math.random() * visibleFiltered.length);
     } else {
-      prevIdx = (currentFilteredIdx - 1 + filteredFiles.length) % filteredFiles.length;
+      // Correctly handle backwards wrap around
+      prevIdx = (currentFilteredIdx - 1 + visibleFiltered.length) % visibleFiltered.length;
     }
-    const prevFile = filteredFiles[prevIdx];
-    if (prevFile) playFile(prevFile, isPlaying);
-  }, [filteredFiles, activeFileId, isRandom, isPlaying, playFile]);
+    
+    const prevFile = visibleFiltered[prevIdx];
+    // Navigation ALWAYS starts playback
+    if (prevFile) playFile(prevFile, true);
+  }, [filteredFiles, currentPath, activeFileId, isRandom, playFile]);
 
   const handleBatchMove = async (target: FileSystemItem) => {
     const itemsToMove: FileSystemItem[] = [];
@@ -755,7 +805,7 @@ const App: React.FC = () => {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       const name = f.name.toLowerCase();
-      if (!(name.endsWith('.wav') || name.endsWith('.mp3') || name.endsWith('.aif') || name.endsWith('.aiff'))) continue;
+      if (!(name.endsWith('.wav') || name.endsWith('.mp3') || name.endsWith('.aif') || name.endsWith('.aiff') || name.endsWith('.flac') || name.endsWith('.ogg') || name.endsWith('.m4a') || name.endsWith('.aac'))) continue;
       const pathParts = f.webkitRelativePath.split('/');
       let currentLevel = root.children!;
       for (let j = 1; j < pathParts.length - 1; j++) {
@@ -854,8 +904,10 @@ const App: React.FC = () => {
       if (e.key === 's' || e.key === 'Enter') { e.preventDefault(); setShowPanel(v => !v); }
       if (e.key === ' ') { 
         e.preventDefault(); 
-        isPlaying ? audioRef.current?.pause() : audioRef.current?.play(); 
-        setIsPlaying(!isPlaying); 
+        if (audioRef.current) {
+          if (audioRef.current.paused) audioRef.current.play();
+          else audioRef.current.pause();
+        }
       }
       if (e.key === 'ArrowRight') playNext(true);
       if (e.key === 'ArrowLeft') playPrev();
@@ -868,7 +920,7 @@ const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isStarted, isLoading, isPlaying, playNext, playPrev, activeFileId, allFiles, selectedIds, filteredFiles, handleRate, moveShortcuts, availableFolders]);
+  }, [isStarted, isLoading, playNext, playPrev, activeFileId, allFiles, selectedIds, filteredFiles, handleRate, moveShortcuts, availableFolders]);
 
   const addMoveShortcut = () => {
     const nextIndex = moveShortcuts.length;
@@ -940,7 +992,13 @@ const App: React.FC = () => {
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden flex text-white font-sans">
-      <audio ref={audioRef} onEnded={() => playNext(false)} className="hidden" />
+      <audio 
+        ref={audioRef} 
+        onEnded={() => playNext(false)} 
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        className="hidden" 
+      />
       
       <main className={`transition-all duration-500 flex flex-col relative z-0 ${showPanel ? 'w-[40%]' : 'w-full'}`}>
         <div className="absolute inset-0 flex flex-col">
@@ -1133,15 +1191,30 @@ const App: React.FC = () => {
           </div>
 
           <div className="flex-1 flex flex-col bg-neutral-900/10 overflow-hidden">
-            <div className="px-4 py-6 flex justify-between items-center border-b border-white/5 shrink-0">
-               <h3 className="text-[8px] font-black uppercase tracking-[0.3em] text-neutral-600">Browser</h3>
-               <button onClick={selectAll} className="text-[7px] font-black uppercase border border-white/10 px-3 py-1.5 hover:bg-white hover:text-black transition-all">
-                 {selectedIds.size === filteredFiles.length ? 'Deselect' : 'Select All Match'}
-               </button>
+            <div className="px-4 py-6 border-b border-white/5 shrink-0 flex flex-col gap-4">
+               <div className="flex justify-between items-center">
+                 <h3 className="text-[8px] font-black uppercase tracking-[0.3em] text-neutral-600">Browser</h3>
+                 <button onClick={selectAll} className="text-[7px] font-black uppercase border border-white/10 px-3 py-1.5 hover:bg-white hover:text-black transition-all">
+                   {selectedIds.size === filteredFiles.length ? 'Deselect' : 'Select All Match'}
+                 </button>
+               </div>
+               <div className="flex items-center gap-2 overflow-hidden">
+                  {currentPath !== 'root' && (
+                    <button 
+                      onClick={navigateUp}
+                      className="text-[7px] font-black uppercase bg-white/5 border border-white/10 px-2 py-1 hover:bg-white hover:text-black transition-all shrink-0"
+                    >
+                      Back
+                    </button>
+                  )}
+                  <div className="text-[7px] font-bold text-neutral-500 truncate uppercase tracking-widest">
+                    Path: {currentPath === 'root' ? '/' : `/${currentPath}`}
+                  </div>
+               </div>
             </div>
             <div className="flex-1 overflow-hidden">
               <FileExplorer 
-                  items={explorerItems} 
+                  items={currentFolderItems} 
                   onFileSelect={playFile}
                   onMoveItem={handleBatchMove} 
                   onLocateFile={handleLocateFile}
@@ -1161,6 +1234,7 @@ const App: React.FC = () => {
                   sortKey={sortKey}
                   sortOrder={sortOrder}
                   activeId={activeFileId}
+                  onToggleFolder={(id) => setCurrentPath(id)}
               />
             </div>
           </div>
